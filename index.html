@@ -12,7 +12,6 @@
         .font-mono-tech { font-family: 'Share Tech Mono', monospace; }
         .glow-cyan { text-shadow: 0 0 10px rgba(6, 182, 212, 0.7); }
         .glow-red { text-shadow: 0 0 10px rgba(239, 68, 68, 0.7); }
-        /* True Neon Green Glow */
         .glow-neon-green { 
             color: #39ff14; 
             text-shadow: 0 0 8px rgba(57, 255, 20, 0.8), 0 0 12px rgba(57, 255, 20, 0.4); 
@@ -115,15 +114,19 @@
         const secretTrigger = document.getElementById('secret-trigger');
         const adminLogoutBtn = document.getElementById('admin-logout-btn');
 
-        // High-DPI Canvas Rendering
+        // High-DPI Canvas Rendering Fixed for CSS constraints
         function resizeCanvas() {
-            const size = Math.min(canvas.parentElement.clientWidth, canvas.parentElement.clientHeight);
+            const rect = canvas.getBoundingClientRect();
+            const size = Math.min(rect.width, rect.height, canvas.parentElement.clientWidth);
             canvas.width = size * window.devicePixelRatio;
             canvas.height = size * window.devicePixelRatio;
+            ctx.resetTransform();
             ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
         }
         window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
+        
+        // Initial setup timeout guarantees accurate container width readings on mobile load
+        setTimeout(resizeCanvas, 100);
 
         // 1. MQTT Network Connection Protocol
         function initializeNetworkConnection(brokerUrl) {
@@ -133,7 +136,6 @@
             mqttClient = mqtt.connect(brokerUrl);
 
             mqttClient.on('connect', () => {
-                // Network online - trigger the neon green stealth text
                 neonStatus.textContent = "CONNECTED TO THE SYSTEM";
                 neonStatus.className = "text-[9px] md:text-[10px] uppercase tracking-widest font-bold glow-neon-green animate-pulse";
                 mqttClient.subscribe([MQTT_TOPIC_STRIKE, MQTT_TOPIC_MODE]);
@@ -143,11 +145,14 @@
                 try {
                     const data = JSON.parse(message.toString());
                     if (topic === MQTT_TOPIC_STRIKE) {
-                        triggerVisualStrike(data.relX, data.relY);
+                        // Public users receive the marker stream here
+                        if (!isAdmin) {
+                            triggerVisualStrike(data.relX, data.relY);
+                        }
                     } else if (topic === MQTT_TOPIC_MODE) {
                         syncSystemMode(data.active);
                     }
-                } catch (e) { console.error("Payload error", e); }
+                } catch (e) { console.error("Payload breakdown", e); }
             });
 
             mqttClient.on('error', () => {
@@ -176,14 +181,24 @@
         }
 
         function triggerVisualStrike(relX, relY) {
-            activeStrikes.push({ relX: relX, relY: relY, alpha: 1.0, maxRadius: 35, currentRadius: 0 });
+            // Deduplicate coordinates slightly to avoid dual render overlapping loops
+            const exists = activeStrikes.some(s => Math.abs(s.relX - relX) < 0.01 && Math.abs(s.relY - relY) < 0.01 && s.alpha > 0.8);
+            if (exists && !isAdmin) return;
+
+            activeStrikes.push({ relX: relX, relY: relY, alpha: 1.0, currentRadius: 0 });
         }
 
         // 3. Canvas Radar Rendering Loop
         let sweepAngle = 0;
         function runRadarLoop() {
+            // Extract display sizes dynamically 
             const w = canvas.width / window.devicePixelRatio;
             const h = canvas.height / window.devicePixelRatio;
+            if (w === 0 || h === 0) {
+                requestAnimationFrame(runRadarLoop);
+                return;
+            }
+
             const cx = w / 2;
             const cy = h / 2;
             const r = Math.min(cx, cy) - 10;
@@ -205,97 +220,103 @@
             ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r);
             ctx.stroke();
 
-            // Sweep Ring
+            // Sweep Ring Animation Line
             sweepAngle += 0.015;
-            ctx.strokeStyle = detectionModeActive ? 'rgba(239, 68, 68, 0.3)' : 'rgba(6, 182, 212, 0.3)';
+            ctx.strokeStyle = detectionModeActive ? 'rgba(239, 68, 68, 0.25)' : 'rgba(6, 182, 212, 0.25)';
             ctx.beginPath();
             ctx.moveTo(cx, cy);
             ctx.lineTo(cx + r * Math.cos(sweepAngle), cy + r * Math.sin(sweepAngle));
             ctx.stroke();
 
-            // Active Acoustic Impacts
+            // Active Acoustic Impacts Tracker
             for (let i = activeStrikes.length - 1; i >= 0; i--) {
                 let strike = activeStrikes[i];
                 let absoluteX = cx + (strike.relX * r);
                 let absoluteY = cy + (strike.relY * r);
 
-                strike.currentRadius += 0.6;
+                strike.currentRadius += 0.8;
                 
+                // Outer fading ring signature
                 ctx.strokeStyle = `rgba(239, 68, 68, ${strike.alpha * 0.6})`;
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 ctx.arc(absoluteX, absoluteY, strike.currentRadius, 0, Math.PI * 2);
                 ctx.stroke();
 
+                // Solid glowing impact core
                 ctx.fillStyle = `rgba(239, 68, 68, ${strike.alpha})`;
                 ctx.beginPath();
-                ctx.arc(absoluteX, absoluteY, 4, 0, Math.PI * 2);
+                ctx.arc(absoluteX, absoluteY, 5, 0, Math.PI * 2);
                 ctx.fill();
 
-                strike.alpha -= 0.007;
+                // Fade calculation speed
+                strike.alpha -= 0.008;
                 if (strike.alpha <= 0) activeStrikes.splice(i, 1);
             }
             requestAnimationFrame(runRadarLoop);
         }
         requestAnimationFrame(runRadarLoop);
 
-        // 4. Secret 3-Tap Admin Trigger Logic
-        let clickCount = 0;
-        let clickTimer;
-        
-        secretTrigger.addEventListener('click', () => {
-            if (isAdmin) return; // If already admin, do nothing
-            
-            clickCount++;
-            clearTimeout(clickTimer);
-            
-            // Visual feedback on tap
-            secretTrigger.classList.add('text-white');
-            setTimeout(() => secretTrigger.classList.remove('text-white'), 100);
-
-            if (clickCount >= 3) {
-                authModal.classList.remove('hidden');
-                document.getElementById('admin-pass-input').focus();
-                clickCount = 0;
-            } else {
-                // Reset counter if taps aren't fast enough (1 second window)
-                clickTimer = setTimeout(() => { clickCount = 0; }, 1000);
-            }
-        });
-
-        // Toggle Switch Publishing
+        // 4. Input Tracking Logic (With Instant Local Rendering Fix)
         canvas.addEventListener('click', (e) => {
             if (!isAdmin || !detectionModeActive) return;
 
             const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / window.devicePixelRatio / rect.width;
-            const scaleY = canvas.height / window.devicePixelRatio / rect.height;
-            
-            const clickX = (e.clientX - rect.left) * scaleX;
-            const clickY = (e.clientY - rect.top) * scaleY;
-
-            const w = canvas.width / window.devicePixelRatio;
-            const h = canvas.height / window.devicePixelRatio;
+            const w = rect.width;
+            const h = rect.height;
             const cx = w / 2;
             const cy = h / 2;
             const r = Math.min(cx, cy) - 10;
 
+            // Pinpoint coordinate scales perfectly across pixel matrices
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
             const relativeX = (clickX - cx) / r;
             const relativeY = (clickY - cy) / r;
 
+            // Restrict input execution area to inner math matrix boundary
             if (relativeX * relativeX + relativeY * relativeY <= 1) {
-                const payload = { relX: relativeX, relY: relativeY };
-                mqttClient.publish(MQTT_TOPIC_STRIKE, JSON.stringify(payload));
+                // FIX 1: Show it instantly on the Admin screen locally
+                triggerVisualStrike(relativeX, relativeY);
+
+                // FIX 2: Send package downstream to update observers
+                if (mqttClient && mqttClient.connected) {
+                    const payload = { relX: relativeX, relY: relativeY };
+                    mqttClient.publish(MQTT_TOPIC_STRIKE, JSON.stringify(payload));
+                }
             }
         });
 
         detectionToggle.addEventListener('change', (e) => {
             if (!isAdmin) return;
             const payload = { active: e.target.checked };
-            mqttClient.publish(MQTT_TOPIC_MODE, JSON.stringify(payload), { retain: true });
+            if (mqttClient && mqttClient.connected) {
+                mqttClient.publish(MQTT_TOPIC_MODE, JSON.stringify(payload), { retain: true });
+            }
+            syncSystemMode(e.target.checked);
         });
 
-        // 5. Auth Modal & Logout Management
+        // 5. Secret 3-Tap Admin Trigger Logic
+        let clickCount = 0;
+        let clickTimer;
+        
+        secretTrigger.addEventListener('click', () => {
+            if (isAdmin) return;
+            
+            clickCount++;
+            clearTimeout(clickTimer);
+
+            if (clickCount >= 3) {
+                authModal.classList.remove('hidden');
+                document.getElementById('admin-pass-input').focus();
+                clickCount = 0;
+            } else {
+                clickTimer = setTimeout(() => { clickCount = 0; }, 1000);
+            }
+        });
+
+        // Auth Modal & Logout Management
         document.getElementById('close-modal-btn').addEventListener('click', () => {
             authModal.classList.add('hidden');
             document.getElementById('admin-pass-input').value = "";
@@ -308,13 +329,13 @@
 
         function verifyPassphrase() {
             const input = document.getElementById('admin-pass-input').value;
-            // Free prototype demo key - change as needed
             if (input === "admin123") { 
                 isAdmin = true;
                 adminControls.classList.remove('hidden');
                 authModal.classList.add('hidden');
                 secretTrigger.classList.add('text-red-500', 'glow-red');
                 secretTrigger.classList.remove('text-cyan-400', 'glow-cyan');
+                resizeCanvas(); // Refresh size profiles upon panel shifting
             } else {
                 alert("ACCESS DISALLOWED");
             }
@@ -327,6 +348,7 @@
             syncSystemMode(false);
             secretTrigger.classList.remove('text-red-500', 'glow-red');
             secretTrigger.classList.add('text-cyan-400', 'glow-cyan');
+            resizeCanvas();
         });
     </script>
 </body>
