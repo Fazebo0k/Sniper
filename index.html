@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acoustic Sniper Detection System</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Share+Tech+Mono&display=swap');
+        .font-orbitron { font-family: 'Orbitron', sans-serif; }
+        .font-mono-tech { font-family: 'Share Tech Mono', monospace; }
+        .glow-cyan { text-shadow: 0 0 10px rgba(6, 182, 212, 0.7); }
+        .glow-red { text-shadow: 0 0 10px rgba(239, 68, 68, 0.7); }
+        /* True Neon Green Glow */
+        .glow-neon-green { 
+            color: #39ff14; 
+            text-shadow: 0 0 8px rgba(57, 255, 20, 0.8), 0 0 12px rgba(57, 255, 20, 0.4); 
+        }
+    </style>
+</head>
+<body class="bg-[#030712] text-slate-100 min-h-screen p-4 md:p-8 font-mono-tech flex flex-col items-center justify-start selection:bg-cyan-500/30 relative">
+
+    <div class="absolute top-4 right-4 md:top-8 md:right-8 z-50 flex items-center pointer-events-none">
+        <span id="neon-status" class="text-[9px] md:text-[10px] uppercase tracking-widest font-bold glow-neon-green animate-pulse">
+            CONNECTED TO THE SYSTEM
+        </span>
+    </div>
+
+    <header class="w-full max-w-5xl mb-6 flex flex-col sm:flex-row justify-between items-center border border-slate-800 bg-slate-900/40 backdrop-blur-md p-4 rounded-xl gap-4">
+        <div>
+            <h1 id="secret-trigger" class="text-xl md:text-2xl font-orbitron font-bold tracking-wider text-cyan-400 glow-cyan cursor-default select-none transition-colors duration-300">
+                SENTINEL-AXIS
+            </h1>
+            <p class="text-xs text-slate-400 uppercase tracking-widest mt-1">Acoustic Triangulation Network</p>
+        </div>
+    </header>
+
+    <main class="w-full max-w-5xl grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        <div class="border border-slate-800 bg-slate-900/20 backdrop-blur-md p-4 rounded-xl flex flex-col justify-between h-fit md:h-auto gap-4">
+            <div>
+                <h2 class="text-sm font-orbitron text-slate-400 uppercase tracking-wider border-b border-slate-800 pb-2 mb-3">System Status</h2>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-slate-500">MIC ARRAYS:</span>
+                        <span class="text-emerald-400">ONLINE (4/4)</span>
+                    </div>
+                    <div class="flex justify-between items-center text-sm">
+                        <span class="text-slate-500">OPERATIONAL MODE:</span>
+                        <span id="system-mode-display" class="text-cyan-400 uppercase tracking-wide">PASSIVE SCANNING</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="admin-controls" class="hidden border border-dashed border-cyan-500/30 bg-cyan-950/10 p-4 rounded-lg mt-4">
+                <h3 class="text-xs font-orbitron text-cyan-400 uppercase tracking-wider mb-3 flex justify-between items-center">
+                    <span>Command Console</span>
+                    <button id="admin-logout-btn" class="text-[9px] px-2 py-1 bg-red-900/40 text-red-400 border border-red-800 rounded hover:bg-red-800/60 cursor-pointer">LOGOUT</button>
+                </h3>
+                <div class="space-y-4">
+                    <label class="flex items-center justify-between text-sm cursor-pointer">
+                        <span class="text-slate-300">DETECTION MODE:</span>
+                        <div class="relative">
+                            <input type="checkbox" id="detection-toggle" class="sr-only peer">
+                            <div class="w-10 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600 peer-checked:after:bg-white"></div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="md:col-span-2 border border-slate-800 bg-slate-900/20 backdrop-blur-md p-6 rounded-xl flex flex-col items-center justify-center relative min-h-[350px] md:min-h-[500px]">
+            <h2 class="absolute top-4 left-4 text-sm font-orbitron text-slate-400 uppercase tracking-wider">Acoustic Grid Array</h2>
+            
+            <div class="w-full max-w-[400px] aspect-square relative flex items-center justify-center">
+                <canvas id="radarCanvas" class="w-full h-full block cursor-crosshair"></canvas>
+            </div>
+        </div>
+
+    </main>
+
+    <div id="auth-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl w-full max-w-sm shadow-[0_0_20px_rgba(6,182,212,0.1)]">
+            <h2 class="text-sm font-orbitron text-slate-200 tracking-wider mb-4 uppercase">Authorize Console Access</h2>
+            <input type="password" id="admin-pass-input" placeholder="ENTER ACCESS CODE" class="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-cyan-400 focus:outline-none focus:border-cyan-500 font-mono-tech tracking-widest mb-4">
+            <div class="flex justify-end gap-2 text-xs">
+                <button id="close-modal-btn" class="px-3 py-2 text-slate-400 hover:text-white transition-colors cursor-pointer">CANCEL</button>
+                <button id="submit-auth-btn" class="px-4 py-2 bg-cyan-950 border border-cyan-700 text-cyan-400 rounded hover:bg-cyan-900 transition-colors cursor-pointer">CONFIRM</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // System State
+        let isAdmin = false;
+        let detectionModeActive = false;
+        let activeStrikes = []; 
+        let mqttClient = null;
+
+        // Configuration 
+        const PRIMARY_BROKER = 'wss://broker.hivemq.com:8000/mqtt';
+        const BACKUP_BROKER = 'wss://broker.emqx.io:8084/mqtt';
+        const MQTT_TOPIC_STRIKE = 'sentinel/acoustic/strike';
+        const MQTT_TOPIC_MODE = 'sentinel/acoustic/mode';
+
+        // UI Element Selection
+        const canvas = document.getElementById('radarCanvas');
+        const ctx = canvas.getContext('2d');
+        const neonStatus = document.getElementById('neon-status');
+        const modeDisplay = document.getElementById('system-mode-display');
+        const adminControls = document.getElementById('admin-controls');
+        const authModal = document.getElementById('auth-modal');
+        const detectionToggle = document.getElementById('detection-toggle');
+        const secretTrigger = document.getElementById('secret-trigger');
+        const adminLogoutBtn = document.getElementById('admin-logout-btn');
+
+        // High-DPI Canvas Rendering
+        function resizeCanvas() {
+            const size = Math.min(canvas.parentElement.clientWidth, canvas.parentElement.clientHeight);
+            canvas.width = size * window.devicePixelRatio;
+            canvas.height = size * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // 1. MQTT Network Connection Protocol
+        function initializeNetworkConnection(brokerUrl) {
+            neonStatus.textContent = "INITIALIZING...";
+            neonStatus.className = "text-[9px] md:text-[10px] uppercase tracking-widest font-bold text-yellow-500 animate-pulse";
+
+            mqttClient = mqtt.connect(brokerUrl);
+
+            mqttClient.on('connect', () => {
+                // Network online - trigger the neon green stealth text
+                neonStatus.textContent = "CONNECTED TO THE SYSTEM";
+                neonStatus.className = "text-[9px] md:text-[10px] uppercase tracking-widest font-bold glow-neon-green animate-pulse";
+                mqttClient.subscribe([MQTT_TOPIC_STRIKE, MQTT_TOPIC_MODE]);
+            });
+
+            mqttClient.on('message', (topic, message) => {
+                try {
+                    const data = JSON.parse(message.toString());
+                    if (topic === MQTT_TOPIC_STRIKE) {
+                        triggerVisualStrike(data.relX, data.relY);
+                    } else if (topic === MQTT_TOPIC_MODE) {
+                        syncSystemMode(data.active);
+                    }
+                } catch (e) { console.error("Payload error", e); }
+            });
+
+            mqttClient.on('error', () => {
+                if (brokerUrl === PRIMARY_BROKER) {
+                    mqttClient.end();
+                    initializeNetworkConnection(BACKUP_BROKER);
+                } else {
+                    neonStatus.textContent = "SYSTEM OFFLINE";
+                    neonStatus.className = "text-[9px] md:text-[10px] uppercase tracking-widest font-bold text-red-500 animate-pulse";
+                }
+            });
+        }
+        initializeNetworkConnection(PRIMARY_BROKER);
+
+        // 2. State Synchronization
+        function syncSystemMode(isActive) {
+            detectionModeActive = isActive;
+            detectionToggle.checked = isActive;
+            if (isActive) {
+                modeDisplay.textContent = "ACTIVE MONITORING";
+                modeDisplay.className = "text-red-500 font-bold glow-red tracking-wide";
+            } else {
+                modeDisplay.textContent = "PASSIVE SCANNING";
+                modeDisplay.className = "text-cyan-400 uppercase tracking-wide";
+            }
+        }
+
+        function triggerVisualStrike(relX, relY) {
+            activeStrikes.push({ relX: relX, relY: relY, alpha: 1.0, maxRadius: 35, currentRadius: 0 });
+        }
+
+        // 3. Canvas Radar Rendering Loop
+        let sweepAngle = 0;
+        function runRadarLoop() {
+            const w = canvas.width / window.devicePixelRatio;
+            const h = canvas.height / window.devicePixelRatio;
+            const cx = w / 2;
+            const cy = h / 2;
+            const r = Math.min(cx, cy) - 10;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // Distance Rings
+            ctx.strokeStyle = 'rgba(6, 182, 212, 0.15)';
+            ctx.lineWidth = 1;
+            for (let i = 1; i <= 4; i++) {
+                ctx.beginPath();
+                ctx.arc(cx, cy, (r / 4) * i, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            // Cross-Axes
+            ctx.beginPath();
+            ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
+            ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r);
+            ctx.stroke();
+
+            // Sweep Ring
+            sweepAngle += 0.015;
+            ctx.strokeStyle = detectionModeActive ? 'rgba(239, 68, 68, 0.3)' : 'rgba(6, 182, 212, 0.3)';
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + r * Math.cos(sweepAngle), cy + r * Math.sin(sweepAngle));
+            ctx.stroke();
+
+            // Active Acoustic Impacts
+            for (let i = activeStrikes.length - 1; i >= 0; i--) {
+                let strike = activeStrikes[i];
+                let absoluteX = cx + (strike.relX * r);
+                let absoluteY = cy + (strike.relY * r);
+
+                strike.currentRadius += 0.6;
+                
+                ctx.strokeStyle = `rgba(239, 68, 68, ${strike.alpha * 0.6})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(absoluteX, absoluteY, strike.currentRadius, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.fillStyle = `rgba(239, 68, 68, ${strike.alpha})`;
+                ctx.beginPath();
+                ctx.arc(absoluteX, absoluteY, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                strike.alpha -= 0.007;
+                if (strike.alpha <= 0) activeStrikes.splice(i, 1);
+            }
+            requestAnimationFrame(runRadarLoop);
+        }
+        requestAnimationFrame(runRadarLoop);
+
+        // 4. Secret 3-Tap Admin Trigger Logic
+        let clickCount = 0;
+        let clickTimer;
+        
+        secretTrigger.addEventListener('click', () => {
+            if (isAdmin) return; // If already admin, do nothing
+            
+            clickCount++;
+            clearTimeout(clickTimer);
+            
+            // Visual feedback on tap
+            secretTrigger.classList.add('text-white');
+            setTimeout(() => secretTrigger.classList.remove('text-white'), 100);
+
+            if (clickCount >= 3) {
+                authModal.classList.remove('hidden');
+                document.getElementById('admin-pass-input').focus();
+                clickCount = 0;
+            } else {
+                // Reset counter if taps aren't fast enough (1 second window)
+                clickTimer = setTimeout(() => { clickCount = 0; }, 1000);
+            }
+        });
+
+        // Toggle Switch Publishing
+        canvas.addEventListener('click', (e) => {
+            if (!isAdmin || !detectionModeActive) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / window.devicePixelRatio / rect.width;
+            const scaleY = canvas.height / window.devicePixelRatio / rect.height;
+            
+            const clickX = (e.clientX - rect.left) * scaleX;
+            const clickY = (e.clientY - rect.top) * scaleY;
+
+            const w = canvas.width / window.devicePixelRatio;
+            const h = canvas.height / window.devicePixelRatio;
+            const cx = w / 2;
+            const cy = h / 2;
+            const r = Math.min(cx, cy) - 10;
+
+            const relativeX = (clickX - cx) / r;
+            const relativeY = (clickY - cy) / r;
+
+            if (relativeX * relativeX + relativeY * relativeY <= 1) {
+                const payload = { relX: relativeX, relY: relativeY };
+                mqttClient.publish(MQTT_TOPIC_STRIKE, JSON.stringify(payload));
+            }
+        });
+
+        detectionToggle.addEventListener('change', (e) => {
+            if (!isAdmin) return;
+            const payload = { active: e.target.checked };
+            mqttClient.publish(MQTT_TOPIC_MODE, JSON.stringify(payload), { retain: true });
+        });
+
+        // 5. Auth Modal & Logout Management
+        document.getElementById('close-modal-btn').addEventListener('click', () => {
+            authModal.classList.add('hidden');
+            document.getElementById('admin-pass-input').value = "";
+        });
+
+        document.getElementById('submit-auth-btn').addEventListener('click', verifyPassphrase);
+        document.getElementById('admin-pass-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') verifyPassphrase();
+        });
+
+        function verifyPassphrase() {
+            const input = document.getElementById('admin-pass-input').value;
+            // Free prototype demo key - change as needed
+            if (input === "admin123") { 
+                isAdmin = true;
+                adminControls.classList.remove('hidden');
+                authModal.classList.add('hidden');
+                secretTrigger.classList.add('text-red-500', 'glow-red');
+                secretTrigger.classList.remove('text-cyan-400', 'glow-cyan');
+            } else {
+                alert("ACCESS DISALLOWED");
+            }
+            document.getElementById('admin-pass-input').value = "";
+        }
+
+        adminLogoutBtn.addEventListener('click', () => {
+            isAdmin = false;
+            adminControls.classList.add('hidden');
+            syncSystemMode(false);
+            secretTrigger.classList.remove('text-red-500', 'glow-red');
+            secretTrigger.classList.add('text-cyan-400', 'glow-cyan');
+        });
+    </script>
+</body>
+</html>
